@@ -52,6 +52,8 @@ const imageInlineSizeLimit = parseInt(
   process.env.IMAGE_INLINE_SIZE_LIMIT || '10000'
 );
 
+const useTsLoader = false;
+
 // Check if TypeScript is setup
 const useTypeScript = fs.existsSync(paths.appTsConfig);
 
@@ -147,12 +149,14 @@ module.exports = function (webpackEnv) {
             root: paths.appSrc,
           },
         },
+        (typeof preProcessor === "string" ?
         {
           loader: require.resolve(preProcessor),
           options: {
             sourceMap: true,
           },
         }
+        : preProcessor),
       );
     }
     return loaders;
@@ -298,7 +302,7 @@ module.exports = function (webpackEnv) {
       // https://medium.com/webpack/webpack-4-code-splitting-chunk-graph-and-the-splitchunks-optimization-be739a861366
       splitChunks: {
         chunks: 'all',
-        name: isEnvDevelopment,
+        name: false,
       },
       // Keep the runtime chunk separated to enable long term caching
       // https://twitter.com/wSokra/status/969679223278505985
@@ -389,10 +393,26 @@ module.exports = function (webpackEnv) {
                 name: 'static/media/[name].[hash:8].[ext]',
               },
             },
+
+            useTsLoader && ({
+              test: /\.(ts|tsx)$/,
+              include: paths.appSrc,
+              loader: require.resolve("ts-loader"),
+              options: {
+                transpileOnly: true,
+                onlyCompileBundledFiles: true,
+                // compilerOptions: (
+                //   (isEnvDevelopment) ? ({
+                //     "target": "esnext",
+                //     "downlevelIteration": false,
+                //   }) : undefined)
+              },
+            }),
+
             // Process application JS with Babel.
             // The preset includes JSX, Flow, TypeScript, and some ESnext features.
             {
-              test: /\.(js|mjs|jsx|ts|tsx)$/,
+              test: useTsLoader ? /\.(js|mjs|jsx)$/ : /\.(js|mjs|jsx|ts|tsx)$/,
               include: paths.appSrc,
               loader: require.resolve('babel-loader'),
               options: {
@@ -407,8 +427,13 @@ module.exports = function (webpackEnv) {
                     },
                   ],
                 ],
-                
+
                 plugins: [
+                  ["@babel/plugin-proposal-logical-assignment-operators"],
+                  [
+                    require.resolve('@babel/plugin-transform-typescript'),
+                    { allowDeclareFields: true },
+                  ],
                   [
                     require.resolve('babel-plugin-named-asset-import'),
                     {
@@ -452,7 +477,7 @@ module.exports = function (webpackEnv) {
                 cacheDirectory: true,
                 // See #6846 for context on why cacheCompression is disabled
                 cacheCompression: false,
-                
+
                 // Babel sourcemaps are needed for debugging into node_modules
                 // code.  Without the options below, debuggers like VSCode
                 // show incorrect code and set breakpoints on the wrong lines.
@@ -534,6 +559,45 @@ module.exports = function (webpackEnv) {
                 'sass-loader'
               ),
             },
+            // Opt-in support for SASS (using .scss or .sass extensions).
+            // By default we support SASS Modules with the
+            // extensions .module.scss or .module.sass
+            {
+              test: /\.less$/,
+              exclude: /\.module\.less$/,
+              use: getStyleLoaders(
+                {
+                  importLoaders: 3,
+                  sourceMap: isEnvProduction && shouldUseSourceMap,
+                },
+                { loader: require.resolve("less-loader"), options: {
+                  lessOptions: {javascriptEnabled: true},
+                  sourceMap: isEnvProduction ? shouldUseSourceMap : isEnvDevelopment,
+                } }
+              ),
+              // Don't consider CSS imports dead code even if the
+              // containing package claims to have no side effects.
+              // Remove this when webpack adds a warning or an error for this.
+              // See https://github.com/webpack/webpack/issues/6571
+              sideEffects: true,
+            },
+            // Adds support for CSS Modules, but using LESS
+            // using the extension .module.less
+            {
+              test: /\.module\.less$/,
+              use: getStyleLoaders(
+                {
+                  importLoaders: 3,
+                  sourceMap: isEnvProduction && shouldUseSourceMap,
+                  modules: {
+                    getLocalIdent: getCSSModuleLocalIdent,
+                  },
+                },
+                { loader: require.resolve("less-loader"), options: {
+                  lessOptions: {javascriptEnabled: true},
+                  sourceMap: isEnvProduction ? shouldUseSourceMap : isEnvDevelopment,
+                } }),
+            },
             // "file" loader makes sure those assets get served by WebpackDevServer.
             // When you `import` an asset, you get its (virtual) filename.
             // In production, they would get copied to the `build` folder.
@@ -552,7 +616,7 @@ module.exports = function (webpackEnv) {
             },
             // ** STOP ** Are you adding a new loader?
             // Make sure to add the new loader(s) before the "file" loader.
-          ],
+          ].filter(Boolean),
         },
       ],
     },
@@ -682,6 +746,7 @@ module.exports = function (webpackEnv) {
           maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
         }),
       // TypeScript type checking
+      false &&
       useTypeScript &&
         new ForkTsCheckerWebpackPlugin({
           typescript: resolve.sync('typescript', {
@@ -713,30 +778,30 @@ module.exports = function (webpackEnv) {
           formatter: isEnvProduction ? typescriptFormatter : undefined,
         }),
       !disableESLintPlugin &&
-        new ESLintPlugin({
-          // Plugin options
-          extensions: ['js', 'mjs', 'jsx', 'ts', 'tsx'],
-          formatter: require.resolve('react-dev-utils/eslintFormatter'),
-          eslintPath: require.resolve('eslint'),
+      new ESLintPlugin({
+        // Plugin options
+        extensions: ['js', 'mjs', 'jsx', 'ts', 'tsx'],
+        formatter: require.resolve('react-dev-utils/eslintFormatter'),
+        eslintPath: require.resolve('eslint'),
           emitWarning: isEnvDevelopment && emitErrorsAsWarnings,
-          context: paths.appSrc,
-          cache: true,
+        context: paths.appSrc,
+        cache: true,
           cacheLocation: path.resolve(
             paths.appNodeModules,
             '.cache/.eslintcache'
           ),
-          // ESLint class options
-          cwd: paths.appPath,
-          resolvePluginsRelativeTo: __dirname,
-          baseConfig: {
-            extends: [require.resolve('eslint-config-react-app/base')],
-            rules: {
-              ...(!hasJsxRuntime && {
-                'react/react-in-jsx-scope': 'error',
-              }),
-            },
+        // ESLint class options
+        cwd: paths.appPath,
+        resolvePluginsRelativeTo: __dirname,
+        baseConfig: {
+          extends: [require.resolve('eslint-config-react-app/base')],
+          rules: {
+            ...(!hasJsxRuntime && {
+              'react/react-in-jsx-scope': 'error',
+            }),
           },
-        }),
+        },
+      }),
     ].filter(Boolean),
     // Some libraries import Node modules but don't use them in the browser.
     // Tell webpack to provide empty mocks for them so importing them works.
