@@ -4,6 +4,10 @@ import './index.css';
 import App from './App';
 import reportWebVitals from './reportWebVitals';
 
+import convert from "heic-convert";
+import XlsxPopulate from "xlsx-populate";
+console.log(convert, XlsxPopulate);
+
 ReactDOM.render(
   <React.StrictMode>
     <App />
